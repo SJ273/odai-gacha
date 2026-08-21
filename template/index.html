@@ -1,315 +1,149 @@
-// ============================================================
-// お題ガチャ - フロントエンド制御
-// サーバー側の /api/* エンドポイントと通信して画面を更新する
-// ============================================================
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>お題ガチャ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
 
-const state = {
-  currentCategory: "すべて",
-  addCategory: null,
-  favoritedTexts: new Set(), // "text|category" のキーで保持
-};
+<div class="bg-glow"></div>
 
-// ---------------- ユーティリティ ----------------
+<header class="page-header">
+  <div class="logo">
+    <span class="logo-capsule">◍</span>
+    <h1>お題ガチャ</h1>
+  </div>
+  <p class="tagline">レバーを回して、今日のお題を引こう</p>
+</header>
 
-function el(id) {
-  return document.getElementById(id);
-}
+<nav class="tabs" role="tablist">
+  <button class="tab-btn is-active" data-tab="gacha">ガチャ</button>
+  <button class="tab-btn" data-tab="history">履歴</button>
+  <button class="tab-btn" data-tab="favorites">お気に入り</button>
+  <button class="tab-btn" data-tab="add">お題を追加</button>
+</nav>
 
-function showToast(message) {
-  const toast = el("toast");
-  toast.textContent = message;
-  toast.hidden = false;
-  clearTimeout(showToast._timer);
-  showToast._timer = setTimeout(() => { toast.hidden = true; }, 2200);
-}
+<main>
 
-async function api(path, options = {}) {
-  const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.error || "通信に失敗しました");
-  }
-  return data;
-}
+  <!-- ===================== ガチャ タブ ===================== -->
+  <section class="tab-panel is-active" id="panel-gacha">
 
-function favKey(text, category) {
-  return `${text}|${category}`;
-}
+    <div class="category-select" id="category-select">
+      <button class="chip is-active" data-category="すべて" style="--chip-color:#F5F3FF;">
+        <span class="chip-dot"></span>すべて
+      </button>
+      {% for c in categories %}
+      <button class="chip" data-category="{{ c.key }}" style="--chip-color:{{ c.color }};">
+        <span class="chip-dot"></span>{{ c.emoji }} {{ c.label }}
+      </button>
+      {% endfor %}
+    </div>
 
-// ---------------- タブ切り替え ----------------
+    <div class="machine-stage">
+      <svg class="machine" viewBox="0 0 320 340" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <!-- ドーム -->
+        <ellipse cx="160" cy="120" rx="118" ry="100" fill="url(#domeGradient)" stroke="rgba(255,255,255,0.25)" stroke-width="2"/>
+        <ellipse cx="160" cy="90" rx="60" ry="24" fill="rgba(255,255,255,0.12)"/>
+        <!-- カプセルたち -->
+        <g id="capsule-cluster">
+          <circle cx="120" cy="150" r="16" fill="#FF8FA3"/>
+          <circle cx="120" cy="150" r="16" fill="none" stroke="#fff" stroke-opacity="0.35" stroke-width="2" stroke-dasharray="3 3" transform="rotate(20 120 150)"/>
+          <circle cx="160" cy="110" r="18" fill="#6EC6FF"/>
+          <circle cx="160" cy="110" r="18" fill="none" stroke="#fff" stroke-opacity="0.35" stroke-width="2" stroke-dasharray="3 3" transform="rotate(20 160 110)"/>
+          <circle cx="200" cy="150" r="15" fill="#FFD166"/>
+          <circle cx="200" cy="150" r="15" fill="none" stroke="#fff" stroke-opacity="0.35" stroke-width="2" stroke-dasharray="3 3" transform="rotate(20 200 150)"/>
+          <circle cx="145" cy="175" r="14" fill="#C89BFF"/>
+          <circle cx="180" cy="180" r="13" fill="#B5E48C"/>
+          <circle cx="125" cy="185" r="11" fill="#FFB86B"/>
+        </g>
+        <!-- 本体 -->
+        <rect x="60" y="190" width="200" height="130" rx="18" fill="url(#bodyGradient)" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+        <!-- 取り出し口 -->
+        <rect x="118" y="270" width="84" height="34" rx="10" fill="#14142450" stroke="rgba(255,255,255,0.2)" stroke-width="2"/>
+        <!-- レバー -->
+        <circle id="lever-knob" cx="235" cy="235" r="20" fill="#FF5D73" stroke="#ffffff40" stroke-width="2"/>
+        <rect x="230" y="230" width="10" height="10" fill="#ffffff30" rx="2"/>
+        <defs>
+          <linearGradient id="domeGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#3A3A5C"/>
+            <stop offset="100%" stop-color="#2B2B45"/>
+          </linearGradient>
+          <linearGradient id="bodyGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#2F2F4C"/>
+            <stop offset="100%" stop-color="#232338"/>
+          </linearGradient>
+        </defs>
+      </svg>
 
-function setupTabs() {
-  const buttons = document.querySelectorAll(".tab-btn");
-  buttons.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      buttons.forEach((b) => b.classList.remove("is-active"));
-      btn.classList.add("is-active");
+      <div class="capsule-drop" id="capsule-drop" aria-hidden="true"></div>
+    </div>
 
-      document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("is-active"));
-      el(`panel-${btn.dataset.tab}`).classList.add("is-active");
+    <button class="gacha-btn" id="gacha-btn">
+      <span class="gacha-btn-label">ガチャを回す</span>
+    </button>
 
-      if (btn.dataset.tab === "history") loadHistory();
-      if (btn.dataset.tab === "favorites") loadFavorites();
-    });
-  });
-}
+    <div class="result-card" id="result-card" hidden>
+      <div class="result-category" id="result-category"></div>
+      <p class="result-text" id="result-text"></p>
+      <div class="result-actions">
+        <span class="result-time" id="result-time"></span>
+        <button class="fav-btn" id="fav-btn" type="button">
+          <span class="fav-icon">☆</span><span class="fav-label">お気に入りに追加</span>
+        </button>
+      </div>
+    </div>
 
-// ---------------- カテゴリ選択（ガチャ） ----------------
+    <p class="empty-hint" id="gacha-empty" hidden>このカテゴリにはまだお題がありません。「お題を追加」から登録してみましょう。</p>
+  </section>
 
-function setupCategorySelect() {
-  const container = el("category-select");
-  container.addEventListener("click", (e) => {
-    const chip = e.target.closest(".chip");
-    if (!chip) return;
-    container.querySelectorAll(".chip").forEach((c) => c.classList.remove("is-active"));
-    chip.classList.add("is-active");
-    state.currentCategory = chip.dataset.category;
-  });
-}
+  <!-- ===================== 履歴 タブ ===================== -->
+  <section class="tab-panel" id="panel-history">
+    <h2 class="panel-title">履歴</h2>
+    <p class="panel-sub">今までに出たお題の記録です</p>
+    <ul class="history-list" id="history-list"></ul>
+    <p class="empty-hint" id="history-empty" hidden>まだ履歴がありません。ガチャを回してみましょう。</p>
+  </section>
 
-// ---------------- ガチャを回す ----------------
+  <!-- ===================== お気に入り タブ ===================== -->
+  <section class="tab-panel" id="panel-favorites">
+    <h2 class="panel-title">お気に入り</h2>
+    <p class="panel-sub">「いいな」と思ったお題を保存しています</p>
+    <ul class="favorite-list" id="favorite-list"></ul>
+    <p class="empty-hint" id="favorites-empty" hidden>まだお気に入りがありません。気に入ったお題があれば☆マークを押してみましょう。</p>
+  </section>
 
-function setupGacha() {
-  const btn = el("gacha-btn");
-  const machine = document.querySelector(".machine");
-  const drop = el("capsule-drop");
+  <!-- ===================== お題を追加 タブ ===================== -->
+  <section class="tab-panel" id="panel-add">
+    <h2 class="panel-title">お題を追加</h2>
+    <p class="panel-sub">自分で考えたお題をガチャに追加できます</p>
 
-  btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    machine.classList.add("is-spinning");
-    drop.classList.remove("is-dropping");
-    void drop.offsetWidth; // reflow でアニメーション再トリガー
-    drop.classList.add("is-dropping");
+    <form class="add-form" id="add-form">
+      <label class="field-label" for="add-text">お題の内容</label>
+      <textarea id="add-text" name="text" maxlength="200" rows="3" placeholder="例）○○をテーマに短い文章を書く" required></textarea>
+      <div class="char-count"><span id="char-count">0</span> / 200</div>
 
-    el("gacha-empty").hidden = true;
+      <label class="field-label">カテゴリ</label>
+      <div class="category-select" id="add-category-select">
+        {% for c in categories %}
+        <button type="button" class="chip" data-category="{{ c.key }}" style="--chip-color:{{ c.color }};">
+          <span class="chip-dot"></span>{{ c.emoji }} {{ c.label }}
+        </button>
+        {% endfor %}
+      </div>
 
-    try {
-      // 演出のための短い待ち時間
-      const [data] = await Promise.all([
-        api("/api/gacha", {
-          method: "POST",
-          body: JSON.stringify({ category: state.currentCategory }),
-        }),
-        new Promise((r) => setTimeout(r, 550)),
-      ]);
-      renderResult(data);
-    } catch (err) {
-      el("result-card").hidden = true;
-      el("gacha-empty").hidden = false;
-      el("gacha-empty").textContent = err.message;
-    } finally {
-      btn.disabled = false;
-      machine.classList.remove("is-spinning");
-    }
-  });
-}
+      <button type="submit" class="submit-btn">この内容でお題を追加する</button>
+      <p class="form-message" id="add-message" hidden></p>
+    </form>
+  </section>
 
-function renderResult(data) {
-  const card = el("result-card");
-  card.hidden = false;
-  card.classList.remove("pop-again");
-  void card.offsetWidth;
+</main>
 
-  el("result-category").textContent = data.category;
-  el("result-category").style.background = data.color;
-  el("result-text").textContent = data.text;
-  el("result-time").textContent = data.drawn_at_label + " に登場";
+<div class="toast" id="toast" hidden></div>
 
-  const favBtn = el("fav-btn");
-  favBtn.dataset.text = data.text;
-  favBtn.dataset.category = data.category;
-  favBtn.dataset.promptId = data.prompt_id;
-  updateFavButtonState(favBtn);
-}
-
-function updateFavButtonState(favBtn) {
-  const key = favKey(favBtn.dataset.text, favBtn.dataset.category);
-  const isFav = state.favoritedTexts.has(key);
-  favBtn.classList.toggle("is-favorited", isFav);
-  favBtn.querySelector(".fav-label").textContent = isFav ? "お気に入り済み" : "お気に入りに追加";
-}
-
-function setupFavButton() {
-  el("fav-btn").addEventListener("click", async (e) => {
-    const btn = e.currentTarget;
-    const key = favKey(btn.dataset.text, btn.dataset.category);
-    if (state.favoritedTexts.has(key)) {
-      showToast("すでにお気に入りに追加されています");
-      return;
-    }
-    try {
-      await api("/api/favorites", {
-        method: "POST",
-        body: JSON.stringify({
-          text: btn.dataset.text,
-          category: btn.dataset.category,
-          prompt_id: Number(btn.dataset.promptId) || null,
-        }),
-      });
-      state.favoritedTexts.add(key);
-      updateFavButtonState(btn);
-      showToast("お気に入りに追加しました");
-    } catch (err) {
-      showToast(err.message);
-    }
-  });
-}
-
-// ---------------- 履歴 ----------------
-
-async function loadHistory() {
-  const list = el("history-list");
-  try {
-    const items = await api("/api/history");
-    el("history-empty").hidden = items.length > 0;
-    list.innerHTML = items.map((item) => `
-      <li class="list-item">
-        <span class="list-item-dot" style="background:${item.color}"></span>
-        <div class="list-item-body">
-          <div class="list-item-meta">
-            <span>${item.drawn_at_label}</span>
-            <span>${item.category}</span>
-          </div>
-          <div class="list-item-text">${escapeHtml(item.text)}</div>
-        </div>
-      </li>
-    `).join("");
-  } catch (err) {
-    showToast(err.message);
-  }
-}
-
-// ---------------- お気に入り ----------------
-
-async function loadFavorites() {
-  const list = el("favorite-list");
-  try {
-    const items = await api("/api/favorites");
-    el("favorites-empty").hidden = items.length > 0;
-
-    state.favoritedTexts = new Set(items.map((i) => favKey(i.text, i.category)));
-    const currentFavBtn = el("fav-btn");
-    if (currentFavBtn.dataset.text) updateFavButtonState(currentFavBtn);
-
-    list.innerHTML = items.map((item) => `
-      <li class="list-item">
-        <span class="list-item-dot" style="background:${item.color}"></span>
-        <div class="list-item-body">
-          <div class="list-item-meta">
-            <span>${item.added_at_label}</span>
-            <span>${item.category}</span>
-          </div>
-          <div class="list-item-text">${escapeHtml(item.text)}</div>
-        </div>
-        <button class="remove-fav-btn" data-id="${item.id}" title="お気に入りから削除">✕</button>
-      </li>
-    `).join("");
-  } catch (err) {
-    showToast(err.message);
-  }
-}
-
-function setupFavoriteListRemoval() {
-  el("favorite-list").addEventListener("click", async (e) => {
-    const btn = e.target.closest(".remove-fav-btn");
-    if (!btn) return;
-    try {
-      await api(`/api/favorites/${btn.dataset.id}`, { method: "DELETE" });
-      await loadFavorites();
-      showToast("お気に入りから削除しました");
-    } catch (err) {
-      showToast(err.message);
-    }
-  });
-}
-
-// ---------------- お題を追加 ----------------
-
-function setupAddForm() {
-  const textarea = el("add-text");
-  const charCount = el("char-count");
-  textarea.addEventListener("input", () => {
-    charCount.textContent = textarea.value.length;
-  });
-
-  const categorySelect = el("add-category-select");
-  categorySelect.addEventListener("click", (e) => {
-    const chip = e.target.closest(".chip");
-    if (!chip) return;
-    categorySelect.querySelectorAll(".chip").forEach((c) => c.classList.remove("is-active"));
-    chip.classList.add("is-active");
-    state.addCategory = chip.dataset.category;
-  });
-
-  el("add-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const message = el("add-message");
-    message.hidden = true;
-
-    const text = textarea.value.trim();
-    if (!text) {
-      showFormMessage("お題を入力してください", true);
-      return;
-    }
-    if (!state.addCategory) {
-      showFormMessage("カテゴリを選んでください", true);
-      return;
-    }
-
-    const submitBtn = e.target.querySelector(".submit-btn");
-    submitBtn.disabled = true;
-    try {
-      await api("/api/prompts", {
-        method: "POST",
-        body: JSON.stringify({ text, category: state.addCategory }),
-      });
-      showFormMessage("お題を追加しました！ガチャに登場するようになります。", false);
-      textarea.value = "";
-      charCount.textContent = "0";
-      categorySelect.querySelectorAll(".chip").forEach((c) => c.classList.remove("is-active"));
-      state.addCategory = null;
-    } catch (err) {
-      showFormMessage(err.message, true);
-    } finally {
-      submitBtn.disabled = false;
-    }
-  });
-}
-
-function showFormMessage(text, isError) {
-  const message = el("add-message");
-  message.hidden = false;
-  message.textContent = text;
-  message.className = "form-message " + (isError ? "is-error" : "is-success");
-}
-
-// ---------------- XSS対策 ----------------
-
-function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-// ---------------- 初期化 ----------------
-
-async function init() {
-  setupTabs();
-  setupCategorySelect();
-  setupGacha();
-  setupFavButton();
-  setupFavoriteListRemoval();
-  setupAddForm();
-
-  try {
-    const favorites = await api("/api/favorites");
-    state.favoritedTexts = new Set(favorites.map((i) => favKey(i.text, i.category)));
-  } catch (err) {
-    // 初期読み込み失敗は致命的ではないので握りつぶす
-  }
-}
-
-document.addEventListener("DOMContentLoaded", init);
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
